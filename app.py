@@ -381,7 +381,7 @@ def overlay_dimensions(width: int, height: int) -> dict[str, int]:
         "big_scale": max(1.0, 1.75 * scale),
         "label_thickness": max(1, int(round(1.0 * scale))),
         "big_thickness": max(2, int(round(3.0 * scale))),
-        "graph_height": max(74, int(0.15 * height)),
+        "graph_height": max(60, int(0.12 * height)),
         "graph_stroke": max(2, int(round(2.0 * scale))),
         "graph_fill_alpha": 0.34,
         "card_radius": max(16, int(22 * scale)),
@@ -489,11 +489,11 @@ def draw_speed_gauge(layer: np.ndarray, dims: dict[str, int], box: tuple[int, in
     text_scale = dims["big_scale"] * 0.88
     text_size, _ = cv2.getTextSize(value_text, FONT_BOLD, text_scale, dims["big_thickness"])
     text_x = x + int((w - text_size[0]) * 0.5)
-    text_y = y + int(h * 0.29)
+    text_y = y + int(h * 0.24)
     draw_text_with_shadow(layer, value_text, (text_x, text_y), text_scale, COLOR_TEXT, dims["big_thickness"], font=FONT_BOLD)
     label = "KPH"
     label_size, _ = cv2.getTextSize(label, FONT_REGULAR, dims["label_scale"], dims["label_thickness"])
-    draw_text_with_shadow(layer, label, (x + int((w - label_size[0]) * 0.5), y + int(h * 0.41)), dims["label_scale"], COLOR_MUTED, dims["label_thickness"], font=FONT_REGULAR)
+    draw_text_with_shadow(layer, label, (x + int((w - label_size[0]) * 0.5), y + int(h * 0.36)), dims["label_scale"], COLOR_MUTED, dims["label_thickness"], font=FONT_REGULAR)
 
 
 def draw_metric_card(layer: np.ndarray, dims: dict[str, int], box: tuple[int, int, int, int], label: str, value: str, accent: tuple[int, int, int]) -> None:
@@ -503,10 +503,11 @@ def draw_metric_card(layer: np.ndarray, dims: dict[str, int], box: tuple[int, in
     draw_rounded_rect(layer, (x, y), (x + w, y + h), COLOR_PANEL_BORDER, dims["card_radius"], thickness=dims["card_border"])
     cv2.line(layer, (x + inner_pad, y + inner_pad + 1), (x + inner_pad + 20, y + inner_pad + 1), accent, max(2, dims["card_border"]), cv2.LINE_AA)
     label_scale = dims["small_scale"] * 0.88
-    draw_text_with_shadow(layer, label, (x + inner_pad, y + inner_pad + 15), label_scale, COLOR_MUTED, dims["label_thickness"], font=FONT_REGULAR)
-    (label_w, label_h), _ = cv2.getTextSize(label, FONT_REGULAR, label_scale, dims["label_thickness"])
+    label_y = y + inner_pad + 14
+    draw_text_with_shadow(layer, label, (x + inner_pad, label_y), label_scale, COLOR_MUTED, dims["label_thickness"], font=FONT_REGULAR)
+    (_, label_h), _ = cv2.getTextSize(label, FONT_REGULAR, label_scale, dims["label_thickness"])
     value_scale = dims["label_scale"] * 1.16
-    value_y = min(y + h - inner_pad - 4, y + inner_pad + label_h + 14)
+    value_y = min(y + h - inner_pad - 4, label_y + label_h + max(10, int(h * 0.22)))
     draw_text_with_shadow(layer, value, (x + inner_pad, value_y), value_scale, COLOR_TEXT, dims["big_thickness"], font=FONT_BOLD)
 
 
@@ -590,9 +591,9 @@ def draw_overlay(
     overlay = frame.copy()
     background = np.zeros_like(frame)
 
-    speed_box = (pad, pad, int(width * 0.30), int(height * 0.24))
-    card_w = int(width * 0.17)
-    card_h = int(height * 0.072)
+    speed_box = (pad, pad, int(width * 0.28), int(height * 0.21))
+    card_w = int(width * 0.155)
+    card_h = int(height * 0.066)
     card_x = width - pad - card_w
     card_y_top = pad
     card_gap = max(6, int(pad * 0.42))
