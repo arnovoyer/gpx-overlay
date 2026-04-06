@@ -1,0 +1,4 @@
+_pycache_/
+.streamlit/
+.venv/
+.venv-1/

@@ -22,6 +22,7 @@ APP_TITLE = "GPX Overlay Video"
 DEFAULT_EMA_ALPHA = 0.22
 DEFAULT_PREVIEW_GRAPH_SECONDS = 30.0
 DEFAULT_MAX_SPEED_KPH = 120.0
+DEFAULT_CARD_FIELDS = ("alt", "slope", "dist")
 FONT_REGULAR = cv2.FONT_HERSHEY_DUPLEX
 FONT_BOLD = cv2.FONT_HERSHEY_TRIPLEX
 COLOR_PANEL = (18, 18, 22)
@@ -32,6 +33,14 @@ COLOR_MUTED = (176, 176, 176)
 COLOR_ACCENT = (164, 232, 255)
 COLOR_ACCENT_SOFT = (110, 180, 255)
 COLOR_GOOD = (150, 235, 171)
+
+CARD_FIELD_OPTIONS = {
+    "alt": "ALT",
+    "slope": "SLOPE",
+    "dist": "DIST",
+    "time": "TIME",
+    "speed": "SPEED",
+}
 
 
 @dataclass(frozen=True)
@@ -351,6 +360,18 @@ def interpolate_series(track: TrackData, values: np.ndarray, start_s: float, end
     return sample_times[mask], sample_values[mask]
 
 
+def smooth_signal(values: np.ndarray, window: int) -> np.ndarray:
+    if values.size == 0:
+        return values
+    if window <= 1:
+        return values
+    window = max(1, int(window))
+    kernel = np.ones(window, dtype=np.float64) / float(window)
+    padded = np.pad(values, (window // 2, window // 2), mode="edge")
+    smoothed = np.convolve(padded, kernel, mode="valid")
+    return smoothed[: values.size]
+
+
 def overlay_dimensions(width: int, height: int) -> dict[str, int]:
     scale = max(0.75, min(width, height) / 900.0)
     return {
@@ -360,13 +381,28 @@ def overlay_dimensions(width: int, height: int) -> dict[str, int]:
         "big_scale": max(1.0, 1.75 * scale),
         "label_thickness": max(1, int(round(1.0 * scale))),
         "big_thickness": max(2, int(round(3.0 * scale))),
-        "graph_height": max(86, int(0.19 * height)),
+        "graph_height": max(74, int(0.15 * height)),
         "graph_stroke": max(2, int(round(2.0 * scale))),
         "graph_fill_alpha": 0.34,
         "card_radius": max(16, int(22 * scale)),
         "card_border": max(1, int(round(1.5 * scale))),
         "gauge_radius": max(42, int(min(width, height) * 0.11)),
     }
+
+
+def resolve_metric_card(field_key: str, metrics: dict[str, float]) -> tuple[str, str, tuple[int, int, int]]:
+    key = field_key.lower().strip()
+    if key == "alt":
+        return "ALT", f"{metrics['elevation_m']:.0f} m", COLOR_GOOD
+    if key == "slope":
+        return "SLOPE", f"{metrics['slope_pct']:.1f} %", COLOR_ACCENT_SOFT
+    if key == "dist":
+        return "DIST", f"{metrics['distance_km']:.2f} km", COLOR_ACCENT
+    if key == "time":
+        return "TIME", format_seconds(metrics["relative_gpx_time"]), COLOR_MUTED
+    if key == "speed":
+        return "SPEED", f"{max(0.0, metrics['speed_kph']):.1f} kph", COLOR_ACCENT
+    return "ALT", f"{metrics['elevation_m']:.0f} m", COLOR_GOOD
 
 
 def draw_text_with_shadow(
@@ -418,10 +454,10 @@ def add_layer(base: np.ndarray, layer: np.ndarray, alpha: float) -> np.ndarray:
 
 def draw_speed_gauge(layer: np.ndarray, dims: dict[str, int], box: tuple[int, int, int, int], speed_kph: float, speed_cap: float) -> None:
     x, y, w, h = box
-    center = (x + int(w * 0.50), y + int(h * 0.58))
-    radius = min(int(w * 0.32), int(h * 0.30), dims["gauge_radius"])
-    start_angle = 210
-    sweep = 120
+    center = (x + int(w * 0.50), y + int(h * 0.70))
+    radius = min(int(w * 0.34), int(h * 0.34), dims["gauge_radius"])
+    start_angle = 150
+    sweep = 240
     end_angle = start_angle + sweep
 
     cv2.ellipse(layer, center, (radius, radius), 0, start_angle, end_angle, COLOR_PANEL_BORDER, dims["card_border"] + 1, cv2.LINE_AA)
@@ -429,36 +465,60 @@ def draw_speed_gauge(layer: np.ndarray, dims: dict[str, int], box: tuple[int, in
     accent_angle = start_angle + sweep * ratio
     cv2.ellipse(layer, center, (radius, radius), 0, start_angle, int(accent_angle), COLOR_ACCENT, dims["card_border"] + 2, cv2.LINE_AA)
 
+    for tick in range(0, 11):
+        tick_ratio = tick / 10.0
+        tick_angle = math.radians((start_angle + sweep * tick_ratio) - 90.0)
+        outer = int(radius * 1.03)
+        inner = int(radius * (0.86 if tick % 2 == 0 else 0.90))
+        x1 = int(center[0] + inner * math.cos(tick_angle))
+        y1 = int(center[1] + inner * math.sin(tick_angle))
+        x2 = int(center[0] + outer * math.cos(tick_angle))
+        y2 = int(center[1] + outer * math.sin(tick_angle))
+        cv2.line(layer, (x1, y1), (x2, y2), (110, 110, 116), 1, cv2.LINE_AA)
+
     needle_angle = math.radians(accent_angle - 90.0)
-    needle_length = int(radius * 0.86)
+    needle_length = int(radius * 0.92)
     needle_x = int(center[0] + needle_length * math.cos(needle_angle))
     needle_y = int(center[1] + needle_length * math.sin(needle_angle))
-    cv2.circle(layer, center, max(4, dims["card_border"] + 2), COLOR_ACCENT, -1, cv2.LINE_AA)
-    cv2.line(layer, center, (needle_x, needle_y), COLOR_ACCENT, max(2, dims["card_border"]), cv2.LINE_AA)
+    cv2.line(layer, center, (needle_x, needle_y), (20, 20, 20), max(4, dims["card_border"] + 2), cv2.LINE_AA)
+    cv2.line(layer, center, (needle_x, needle_y), COLOR_TEXT, max(2, dims["card_border"] + 1), cv2.LINE_AA)
+    cv2.circle(layer, center, max(5, dims["card_border"] + 3), COLOR_TEXT, -1, cv2.LINE_AA)
+    cv2.circle(layer, center, max(2, dims["card_border"] + 1), COLOR_ACCENT_SOFT, -1, cv2.LINE_AA)
 
     value_text = f"{speed_kph:0.1f}"
-    text_scale = dims["big_scale"] * 0.96
+    text_scale = dims["big_scale"] * 0.88
     text_size, _ = cv2.getTextSize(value_text, FONT_BOLD, text_scale, dims["big_thickness"])
     text_x = x + int((w - text_size[0]) * 0.5)
-    text_y = y + int(h * 0.42)
+    text_y = y + int(h * 0.29)
     draw_text_with_shadow(layer, value_text, (text_x, text_y), text_scale, COLOR_TEXT, dims["big_thickness"], font=FONT_BOLD)
     label = "KPH"
     label_size, _ = cv2.getTextSize(label, FONT_REGULAR, dims["label_scale"], dims["label_thickness"])
-    draw_text_with_shadow(layer, label, (x + int((w - label_size[0]) * 0.5), y + int(h * 0.82)), dims["label_scale"], COLOR_MUTED, dims["label_thickness"], font=FONT_REGULAR)
+    draw_text_with_shadow(layer, label, (x + int((w - label_size[0]) * 0.5), y + int(h * 0.41)), dims["label_scale"], COLOR_MUTED, dims["label_thickness"], font=FONT_REGULAR)
 
 
 def draw_metric_card(layer: np.ndarray, dims: dict[str, int], box: tuple[int, int, int, int], label: str, value: str, accent: tuple[int, int, int]) -> None:
     x, y, w, h = box
-    inner_pad = max(10, int(12 * min(w, h) / 90))
+    inner_pad = max(8, int(10 * min(w, h) / 90))
     draw_rounded_rect(layer, (x, y), (x + w, y + h), COLOR_PANEL, dims["card_radius"])
     draw_rounded_rect(layer, (x, y), (x + w, y + h), COLOR_PANEL_BORDER, dims["card_radius"], thickness=dims["card_border"])
-    cv2.line(layer, (x + inner_pad, y + inner_pad), (x + inner_pad + 24, y + inner_pad), accent, max(2, dims["card_border"]), cv2.LINE_AA)
-    draw_text_with_shadow(layer, label, (x + inner_pad, y + inner_pad + 18), dims["small_scale"], COLOR_MUTED, dims["label_thickness"], font=FONT_REGULAR)
-    value_scale = dims["label_scale"] * 1.35
-    draw_text_with_shadow(layer, value, (x + inner_pad, y + h - inner_pad - 8), value_scale, COLOR_TEXT, dims["big_thickness"], font=FONT_BOLD)
+    cv2.line(layer, (x + inner_pad, y + inner_pad + 1), (x + inner_pad + 20, y + inner_pad + 1), accent, max(2, dims["card_border"]), cv2.LINE_AA)
+    label_scale = dims["small_scale"] * 0.88
+    draw_text_with_shadow(layer, label, (x + inner_pad, y + inner_pad + 15), label_scale, COLOR_MUTED, dims["label_thickness"], font=FONT_REGULAR)
+    (label_w, label_h), _ = cv2.getTextSize(label, FONT_REGULAR, label_scale, dims["label_thickness"])
+    value_scale = dims["label_scale"] * 1.16
+    value_y = min(y + h - inner_pad - 4, y + inner_pad + label_h + 14)
+    draw_text_with_shadow(layer, value, (x + inner_pad, value_y), value_scale, COLOR_TEXT, dims["big_thickness"], font=FONT_BOLD)
 
 
-def draw_profile_chart(layer: np.ndarray, dims: dict[str, int], box: tuple[int, int, int, int], track: TrackData, current_time: float, title: str = "Elevation") -> None:
+def draw_profile_chart(
+    layer: np.ndarray,
+    dims: dict[str, int],
+    box: tuple[int, int, int, int],
+    track: TrackData,
+    current_time: float,
+    smooth_window: int = 5,
+    title: str = "Elevation",
+) -> None:
     x, y, w, h = box
     chart_layer = np.zeros_like(layer)
     draw_rounded_rect(chart_layer, (x, y), (x + w, y + h), COLOR_PANEL_SOFT, dims["card_radius"])
@@ -471,6 +531,7 @@ def draw_profile_chart(layer: np.ndarray, dims: dict[str, int], box: tuple[int, 
     sample_start = max(0.0, current_time - DEFAULT_PREVIEW_GRAPH_SECONDS)
     sample_end = min(track.time_s[-1], max(current_time, sample_start + 1.0))
     sample_times, sample_values = interpolate_series(track, track.elevation_m, sample_start, sample_end, max(80, int(w / 8)))
+    sample_values = smooth_signal(sample_values, smooth_window)
 
     draw_text_with_shadow(chart_layer, title.upper(), (content_x1, content_y1 + 18), dims["small_scale"], COLOR_MUTED, dims["label_thickness"], font=FONT_REGULAR)
 
@@ -513,38 +574,46 @@ def draw_profile_chart(layer: np.ndarray, dims: dict[str, int], box: tuple[int, 
     cv2.addWeighted(chart_layer, 0.78, layer, 1.0, 0.0, layer)
 
 
-def draw_overlay(frame: np.ndarray, metrics: Optional[dict[str, float]], track: TrackData, video_time_s: float, offset_s: float) -> np.ndarray:
+def draw_overlay(
+    frame: np.ndarray,
+    metrics: Optional[dict[str, float]],
+    track: TrackData,
+    video_time_s: float,
+    offset_s: float,
+    card_fields: tuple[str, str, str],
+    chart_smooth_window: int,
+    gauge_max_kph: float,
+) -> np.ndarray:
     height, width = frame.shape[:2]
     dims = overlay_dimensions(width, height)
     pad = dims["pad"]
     overlay = frame.copy()
     background = np.zeros_like(frame)
 
-    speed_box = (pad, pad, int(width * 0.34), int(height * 0.30))
-    card_w = int(width * 0.20)
-    card_h = int(height * 0.088)
+    speed_box = (pad, pad, int(width * 0.30), int(height * 0.24))
+    card_w = int(width * 0.17)
+    card_h = int(height * 0.072)
     card_x = width - pad - card_w
     card_y_top = pad
-    card_gap = max(8, int(pad * 0.55))
+    card_gap = max(6, int(pad * 0.42))
 
     graph_h = dims["graph_height"]
     graph_box = (pad, height - graph_h - pad, width - 2 * pad, graph_h)
 
     if metrics is not None:
         speed_kph = max(0.0, metrics["speed_kph"])
-        elevation_m = metrics["elevation_m"]
-        slope_pct = metrics["slope_pct"]
-        distance_km = metrics["distance_km"]
-
+        auto_cap = max(28.0, float(np.nanpercentile(track.speed_kph, 90)) * 1.10)
+        cap = gauge_max_kph if gauge_max_kph > 0 else auto_cap
         draw_rounded_rect(background, (speed_box[0], speed_box[1]), (speed_box[0] + speed_box[2], speed_box[1] + speed_box[3]), COLOR_PANEL, dims["card_radius"])
         draw_rounded_rect(background, (speed_box[0], speed_box[1]), (speed_box[0] + speed_box[2], speed_box[1] + speed_box[3]), COLOR_PANEL_BORDER, dims["card_radius"], thickness=dims["card_border"])
-        draw_speed_gauge(background, dims, speed_box, speed_kph, max(DEFAULT_MAX_SPEED_KPH, float(np.nanpercentile(track.speed_kph, 95)) * 1.25))
+        draw_speed_gauge(background, dims, speed_box, speed_kph, cap)
 
-        draw_metric_card(background, dims, (card_x, card_y_top, card_w, card_h), "ALT", f"{elevation_m:0.0f} m", COLOR_GOOD)
-        draw_metric_card(background, dims, (card_x, card_y_top + card_h + card_gap, card_w, card_h), "SLOPE", f"{slope_pct:0.1f} %", COLOR_ACCENT_SOFT)
-        draw_metric_card(background, dims, (card_x, card_y_top + 2 * (card_h + card_gap), card_w, card_h), "DIST", f"{distance_km:0.2f} km", COLOR_ACCENT)
+        for idx, field in enumerate(card_fields):
+            label, value, accent = resolve_metric_card(field, metrics)
+            box_y = card_y_top + idx * (card_h + card_gap)
+            draw_metric_card(background, dims, (card_x, box_y, card_w, card_h), label, value, accent)
 
-    draw_profile_chart(background, dims, graph_box, track, video_time_s + offset_s, title="Elevation")
+    draw_profile_chart(background, dims, graph_box, track, video_time_s + offset_s, smooth_window=chart_smooth_window, title="Elevation")
 
     overlay = add_layer(overlay, background, 0.92)
 
@@ -577,7 +646,16 @@ def read_frame_at(video_path: Path, frame_index: int) -> Optional[np.ndarray]:
         capture.release()
 
 
-def export_video(video_meta: VideoMeta, track: TrackData, offset_s: float, output_path: Path, progress_placeholder: Optional[st.delta_generator.DeltaGenerator] = None) -> Path:
+def export_video(
+    video_meta: VideoMeta,
+    track: TrackData,
+    offset_s: float,
+    output_path: Path,
+    progress_placeholder: Optional[st.delta_generator.DeltaGenerator] = None,
+    card_fields: tuple[str, str, str] = DEFAULT_CARD_FIELDS,
+    chart_smooth_window: int = 7,
+    gauge_max_kph: float = 0.0,
+) -> Path:
     if not ensure_ffmpeg_available():
         raise RuntimeError("FFmpeg wurde nicht gefunden. Bitte FFmpeg installieren oder in PATH verfügbar machen.")
 
@@ -608,7 +686,7 @@ def export_video(video_meta: VideoMeta, track: TrackData, offset_s: float, outpu
                 break
             video_time_s = frame_idx / video_meta.fps
             metrics = gpx_values_at_time(track, video_time_s, offset_s)
-            rendered = draw_overlay(frame, metrics, track, video_time_s, offset_s)
+            rendered = draw_overlay(frame, metrics, track, video_time_s, offset_s, card_fields, chart_smooth_window, gauge_max_kph)
             writer.write(rendered)
             if progress_placeholder is not None:
                 progress_placeholder.progress(min(1.0, (frame_idx + 1) / video_meta.frame_count))
@@ -668,6 +746,12 @@ def reset_session_state() -> None:
         "manual_offset_s": 0.0,
         "fine_tune_s": 0.0,
         "use_auto_sync": True,
+        "chart_smooth_window": 7,
+        "card_field_1": DEFAULT_CARD_FIELDS[0],
+        "card_field_2": DEFAULT_CARD_FIELDS[1],
+        "card_field_3": DEFAULT_CARD_FIELDS[2],
+        "gauge_max_kph": 0,
+        "export_directory": str((Path.cwd() / "exports").resolve()),
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -681,7 +765,15 @@ def load_files(video_file, gpx_file) -> None:
         st.session_state.gpx_path = save_upload(gpx_file)
 
 
-def preview_frame(video_meta: VideoMeta, track: TrackData, offset_s: float, frame_index: int) -> None:
+def preview_frame(
+    video_meta: VideoMeta,
+    track: TrackData,
+    offset_s: float,
+    frame_index: int,
+    card_fields: tuple[str, str, str],
+    chart_smooth_window: int,
+    gauge_max_kph: float,
+) -> None:
     frame = read_frame_at(video_meta.path, frame_index)
     if frame is None:
         st.error("Frame konnte nicht geladen werden.")
@@ -689,7 +781,7 @@ def preview_frame(video_meta: VideoMeta, track: TrackData, offset_s: float, fram
 
     video_time_s = frame_index / video_meta.fps
     metrics = gpx_values_at_time(track, video_time_s, offset_s)
-    rendered = draw_overlay(frame, metrics, track, video_time_s, offset_s)
+    rendered = draw_overlay(frame, metrics, track, video_time_s, offset_s, card_fields, chart_smooth_window, gauge_max_kph)
     rendered_rgb = cv2.cvtColor(rendered, cv2.COLOR_BGR2RGB)
     st.image(rendered_rgb, use_container_width=True, caption=f"Frame {frame_index} bei {format_seconds(video_time_s)}")
 
@@ -702,18 +794,37 @@ def render_header(video_meta: VideoMeta, track: TrackData) -> None:
     col4.metric("GPX-Punkte", f"{track.time_s.size}")
 
 
-def export_ui(video_meta: VideoMeta, track: TrackData, offset_s: float) -> None:
+def export_ui(
+    video_meta: VideoMeta,
+    track: TrackData,
+    offset_s: float,
+    card_fields: tuple[str, str, str],
+    chart_smooth_window: int,
+    gauge_max_kph: float,
+) -> None:
+    output_dir = st.text_input("Export-Ordner", value=st.session_state.export_directory, key="export_directory")
     output_name = st.text_input("Export-Dateiname", value="overlay_output.mp4")
     export_clicked = st.button("Video mit Overlay exportieren", type="primary")
     if not export_clicked:
         return
 
-    output_path = Path(tempfile.gettempdir()) / output_name
+    output_root = Path(output_dir).expanduser()
+    output_root.mkdir(parents=True, exist_ok=True)
+    output_path = output_root / output_name
     progress = st.progress(0.0)
     status = st.empty()
     try:
         status.info("Export läuft ...")
-        result = export_video(video_meta, track, offset_s, output_path, progress_placeholder=progress)
+        result = export_video(
+            video_meta,
+            track,
+            offset_s,
+            output_path,
+            progress_placeholder=progress,
+            card_fields=card_fields,
+            chart_smooth_window=chart_smooth_window,
+            gauge_max_kph=gauge_max_kph,
+        )
         status.success(f"Export abgeschlossen: {result}")
         with result.open("rb") as handle:
             st.download_button("MP4 herunterladen", data=handle, file_name=result.name, mime="video/mp4")
@@ -789,6 +900,44 @@ def main() -> None:
             key="fine_tune_s",
         )
 
+        st.header("Overlay Layout")
+        card_field_1 = st.selectbox(
+            "Karte 1",
+            options=list(CARD_FIELD_OPTIONS.keys()),
+            format_func=lambda key: CARD_FIELD_OPTIONS[key],
+            key="card_field_1",
+        )
+        card_field_2 = st.selectbox(
+            "Karte 2",
+            options=list(CARD_FIELD_OPTIONS.keys()),
+            format_func=lambda key: CARD_FIELD_OPTIONS[key],
+            key="card_field_2",
+        )
+        card_field_3 = st.selectbox(
+            "Karte 3",
+            options=list(CARD_FIELD_OPTIONS.keys()),
+            format_func=lambda key: CARD_FIELD_OPTIONS[key],
+            key="card_field_3",
+        )
+        chart_smooth_window = st.slider(
+            "Elevation Smooth",
+            min_value=1,
+            max_value=21,
+            value=int(st.session_state.chart_smooth_window),
+            step=2,
+            key="chart_smooth_window",
+        )
+        gauge_max_kph = st.slider(
+            "Gauge Max KPH (0 = Auto)",
+            min_value=0,
+            max_value=180,
+            value=int(st.session_state.gauge_max_kph),
+            step=5,
+            key="gauge_max_kph",
+        )
+
+    card_fields = (card_field_1, card_field_2, card_field_3)
+
     if auto_sync_enabled and auto_offset_s is not None:
         offset_s = auto_offset_s + fine_tune_s
     else:
@@ -809,10 +958,10 @@ def main() -> None:
         elif current_gpx_time > track_data.time_s[-1]:
             st.warning("Der aktuelle Videopunkt liegt hinter dem Ende der GPX-Daten.")
 
-    preview_frame(video_meta, track_data, offset_s, frame_index)
+    preview_frame(video_meta, track_data, offset_s, frame_index, card_fields, chart_smooth_window, float(gauge_max_kph))
 
     st.subheader("Export")
-    export_ui(video_meta, track_data, offset_s)
+    export_ui(video_meta, track_data, offset_s, card_fields, chart_smooth_window, float(gauge_max_kph))
 
     with st.expander("GPX-Statistik", expanded=False):
         stats = pd.DataFrame(
