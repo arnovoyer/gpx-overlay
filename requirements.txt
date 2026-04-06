@@ -1,0 +1,5 @@
+streamlit>=1.31
+opencv-python>=4.9
+gpxpy>=1.6
+numpy>=1.26
+pandas>=2.2
