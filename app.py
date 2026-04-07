@@ -396,14 +396,14 @@ def project_points_to_box(points_xy: np.ndarray, box: tuple[int, int, int, int])
 def overlay_palette(theme: str) -> dict[str, tuple[int, int, int]]:
     if theme == "dark":
         return {
-            "panel": (18, 26, 46),
-            "panel_soft": (22, 34, 60),
-            "panel_border": (122, 146, 208),
+            "panel": (10, 12, 16),
+            "panel_soft": (15, 18, 24),
+            "panel_border": (62, 74, 92),
             "text": (248, 248, 248),
-            "muted": (198, 212, 236),
-            "accent": (94, 166, 255),
-            "accent_soft": (138, 198, 255),
-            "good": (132, 224, 176),
+            "muted": (186, 194, 206),
+            "accent": (232, 190, 124),
+            "accent_soft": (176, 146, 96),
+            "good": (156, 214, 170),
         }
     return {
         "panel": COLOR_PANEL,
@@ -587,12 +587,13 @@ def draw_speed_gauge(
     cv2.ellipse(layer, center, (int(radius * 0.55), int(radius * 0.55)), 0, start_angle, int(accent_angle), bright_color, max(1, int(radius * 0.035)), cv2.LINE_AA)
     
     needle_angle = math.radians(accent_angle - 90.0)
-    needle_length = int(radius * 0.92)
+    needle_length = int(radius * 0.96)
     needle_x = int(center[0] + needle_length * math.cos(needle_angle))
     needle_y = int(center[1] + needle_length * math.sin(needle_angle))
-    cv2.line(layer, center, (needle_x, needle_y), palette["panel"], max(4, dims["card_border"] + 2), cv2.LINE_AA)
-    cv2.line(layer, center, (needle_x, needle_y), palette["accent"], max(2, dims["card_border"] + 1), cv2.LINE_AA)
-    cv2.circle(layer, center, max(5, dims["card_border"] + 3), palette["accent"], -1, cv2.LINE_AA)
+    cv2.line(layer, center, (needle_x, needle_y), (0, 0, 0), max(6, dims["card_border"] + 4), cv2.LINE_AA)
+    cv2.line(layer, center, (needle_x, needle_y), palette["text"], max(3, dims["card_border"] + 2), cv2.LINE_AA)
+    cv2.circle(layer, center, max(8, dims["card_border"] + 5), palette["text"], -1, cv2.LINE_AA)
+    cv2.circle(layer, center, max(4, dims["card_border"] + 2), palette["accent"], -1, cv2.LINE_AA)
     cv2.circle(layer, center, max(2, dims["card_border"] + 1), palette["text"], -1, cv2.LINE_AA)
     
     value_text = f"{speed_kph:0.1f}"
