@@ -3,6 +3,8 @@ address = "localhost"
 port = 8501
 headless = true
 runOnSave = true
+maxUploadSize = 1024
+maxMessageSize = 1024
 
 [browser]
 gatherUsageStats = false
