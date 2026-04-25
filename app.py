@@ -24,6 +24,8 @@ DEFAULT_PREVIEW_GRAPH_SECONDS = 30.0
 DEFAULT_MAX_SPEED_KPH = 120.0
 DEFAULT_CARD_FIELDS = ("alt", "slope", "dist")
 DEFAULT_MINIMAP_WINDOW_KM = 1.0
+UNIT_METRIC = "metric"
+UNIT_IMPERIAL = "imperial"
 FONT_REGULAR = cv2.FONT_HERSHEY_DUPLEX
 FONT_BOLD = cv2.FONT_HERSHEY_TRIPLEX
 COLOR_PANEL = (18, 18, 22)
@@ -41,6 +43,40 @@ CARD_FIELD_OPTIONS = {
     "dist": "DIST",
     "time": "TIME",
     "speed": "SPEED",
+}
+
+OVERLAY_PRESETS: dict[str, Optional[dict[str, object]]] = {
+    "Custom": None,
+    "Clean": {
+        "card_field_1": "speed",
+        "card_field_2": "dist",
+        "card_field_3": "time",
+        "overlay_theme": "light",
+        "show_gauge": True,
+        "show_cards": True,
+        "show_minimap": True,
+        "show_elevation": False,
+    },
+    "Race": {
+        "card_field_1": "alt",
+        "card_field_2": "slope",
+        "card_field_3": "dist",
+        "overlay_theme": "dark",
+        "show_gauge": True,
+        "show_cards": True,
+        "show_minimap": True,
+        "show_elevation": True,
+    },
+    "Minimal": {
+        "card_field_1": "speed",
+        "card_field_2": "time",
+        "card_field_3": "dist",
+        "overlay_theme": "dark",
+        "show_gauge": True,
+        "show_cards": False,
+        "show_minimap": False,
+        "show_elevation": True,
+    },
 }
 
 @dataclass(frozen=True)
@@ -124,6 +160,22 @@ def ensure_ffmpeg_available() -> bool:
 
 def clamp(value: float, minimum: float, maximum: float) -> float:
     return max(minimum, min(maximum, value))
+
+
+def speed_unit_label(unit_system: str) -> str:
+    return "MPH" if unit_system == UNIT_IMPERIAL else "KPH"
+
+
+def speed_from_kph(value_kph: float, unit_system: str) -> float:
+    return value_kph * 0.621371 if unit_system == UNIT_IMPERIAL else value_kph
+
+
+def distance_from_km(value_km: float, unit_system: str) -> float:
+    return value_km * 0.621371 if unit_system == UNIT_IMPERIAL else value_km
+
+
+def elevation_from_m(value_m: float, unit_system: str) -> float:
+    return value_m * 3.28084 if unit_system == UNIT_IMPERIAL else value_m
 
 
 def format_timestamp(timestamp_s: float) -> str:
@@ -435,19 +487,39 @@ def overlay_dimensions(width: int, height: int) -> dict[str, int]:
     }
 
 
-def resolve_metric_card(field_key: str, metrics: dict[str, float], palette: dict[str, tuple[int, int, int]]) -> tuple[str, str, tuple[int, int, int]]:
+def resolve_metric_card(
+    field_key: str,
+    metrics: dict[str, float],
+    palette: dict[str, tuple[int, int, int]],
+    unit_system: str,
+) -> tuple[str, str, tuple[int, int, int]]:
     key = field_key.lower().strip()
     if key == "alt":
-        return "ALT", f"{metrics['elevation_m']:.0f} m", palette["good"]
+        alt_value = elevation_from_m(metrics["elevation_m"], unit_system)
+        alt_unit = "ft" if unit_system == UNIT_IMPERIAL else "m"
+        return "ALT", f"{alt_value:.0f} {alt_unit}", palette["good"]
     if key == "slope":
         return "SLOPE", f"{metrics['slope_pct']:.1f} %", palette["accent_soft"]
     if key == "dist":
-        return "DIST", f"{metrics['distance_km']:.2f} km", palette["accent"]
+        dist_value = distance_from_km(metrics["distance_km"], unit_system)
+        dist_unit = "mi" if unit_system == UNIT_IMPERIAL else "km"
+        return "DIST", f"{dist_value:.2f} {dist_unit}", palette["accent"]
     if key == "time":
         return "TIME", format_seconds(metrics["relative_gpx_time"]), palette["muted"]
     if key == "speed":
-        return "SPEED", f"{max(0.0, metrics['speed_kph']):.1f} kph", palette["accent"]
-    return "ALT", f"{metrics['elevation_m']:.0f} m", palette["good"]
+        speed_value = speed_from_kph(max(0.0, metrics["speed_kph"]), unit_system)
+        return "SPEED", f"{speed_value:.1f} {speed_unit_label(unit_system).lower()}", palette["accent"]
+    alt_value = elevation_from_m(metrics["elevation_m"], unit_system)
+    alt_unit = "ft" if unit_system == UNIT_IMPERIAL else "m"
+    return "ALT", f"{alt_value:.0f} {alt_unit}", palette["good"]
+
+
+def apply_overlay_preset(preset_name: str) -> None:
+    preset = OVERLAY_PRESETS.get(preset_name)
+    if preset is None:
+        return
+    for key, value in preset.items():
+        st.session_state[key] = value
 
 
 def apply_ui_style() -> None:
@@ -550,8 +622,9 @@ def draw_speed_gauge(
     layer: np.ndarray,
     dims: dict[str, int],
     box: tuple[int, int, int, int],
-    speed_kph: float,
+    speed_value: float,
     speed_cap: float,
+    speed_label: str,
     palette: dict[str, tuple[int, int, int]],
 ) -> None:
     x, y, w, h = box
@@ -562,7 +635,7 @@ def draw_speed_gauge(
     end_angle = start_angle + sweep
 
     cv2.ellipse(layer, center, (radius, radius), 0, start_angle, end_angle, palette["panel_border"], dims["card_border"] + 1, cv2.LINE_AA)
-    ratio = clamp(speed_kph / max(1.0, speed_cap), 0.0, 1.0)
+    ratio = clamp(speed_value / max(1.0, speed_cap), 0.0, 1.0)
     accent_angle = start_angle + sweep * ratio
     cv2.ellipse(layer, center, (radius, radius), 0, start_angle, int(accent_angle), palette["accent_soft"], dims["card_border"] + 2, cv2.LINE_AA)
 
@@ -597,13 +670,13 @@ def draw_speed_gauge(
     cv2.circle(layer, center, max(4, dims["card_border"] + 2), palette["accent"], -1, cv2.LINE_AA)
     cv2.circle(layer, center, max(2, dims["card_border"] + 1), palette["text"], -1, cv2.LINE_AA)
     
-    value_text = f"{speed_kph:0.1f}"
+    value_text = f"{speed_value:0.1f}"
     text_scale = dims["big_scale"] * 0.88
     text_size, _ = cv2.getTextSize(value_text, FONT_BOLD, text_scale, dims["big_thickness"])
     text_x = x + int((w - text_size[0]) * 0.5)
     text_y = y + int(h * 0.24)
     draw_text_with_shadow(layer, value_text, (text_x, text_y), text_scale, palette["text"], dims["big_thickness"], font=FONT_BOLD)
-    label = "KPH"
+    label = speed_label
     label_size, _ = cv2.getTextSize(label, FONT_REGULAR, dims["label_scale"], dims["label_thickness"])
     draw_text_with_shadow(layer, label, (x + int((w - label_size[0]) * 0.5), y + int(h * 0.36)), dims["label_scale"], palette["muted"], dims["label_thickness"], font=FONT_REGULAR)
 
@@ -754,6 +827,11 @@ def draw_overlay(
     gauge_max_kph: float,
     minimap_window_km: float,
     overlay_theme: str,
+    unit_system: str,
+    show_gauge: bool,
+    show_cards: bool,
+    show_minimap: bool,
+    show_elevation: bool,
 ) -> np.ndarray:
     height, width = frame.shape[:2]
     dims = overlay_dimensions(width, height)
@@ -775,20 +853,27 @@ def draw_overlay(
 
     if metrics is not None:
         speed_kph = max(0.0, metrics["speed_kph"])
-        auto_cap = max(DEFAULT_MAX_SPEED_KPH, float(np.nanpercentile(track.speed_kph, 95)) * 1.15)
+        speed_value = speed_from_kph(speed_kph, unit_system)
+        auto_cap_kph = max(DEFAULT_MAX_SPEED_KPH, float(np.nanpercentile(track.speed_kph, 95)) * 1.15)
+        auto_cap = speed_from_kph(auto_cap_kph, unit_system)
         cap = gauge_max_kph if gauge_max_kph > 0 else auto_cap
-        draw_rounded_rect(background, (speed_box[0], speed_box[1]), (speed_box[0] + speed_box[2], speed_box[1] + speed_box[3]), palette["panel"], dims["card_radius"])
-        draw_rounded_rect(background, (speed_box[0], speed_box[1]), (speed_box[0] + speed_box[2], speed_box[1] + speed_box[3]), palette["panel_border"], dims["card_radius"], thickness=dims["card_border"])
-        draw_speed_gauge(background, dims, speed_box, speed_kph, cap, palette)
+        if show_gauge:
+            draw_rounded_rect(background, (speed_box[0], speed_box[1]), (speed_box[0] + speed_box[2], speed_box[1] + speed_box[3]), palette["panel"], dims["card_radius"])
+            draw_rounded_rect(background, (speed_box[0], speed_box[1]), (speed_box[0] + speed_box[2], speed_box[1] + speed_box[3]), palette["panel_border"], dims["card_radius"], thickness=dims["card_border"])
+            draw_speed_gauge(background, dims, speed_box, speed_value, cap, speed_unit_label(unit_system), palette)
 
-        for idx, field in enumerate(card_fields):
-            label, value, accent = resolve_metric_card(field, metrics, palette)
-            box_y = card_y_top + idx * (card_h + card_gap)
-            draw_metric_card(background, dims, (card_x, box_y, card_w, card_h), label, value, accent, palette)
+        if show_cards:
+            for idx, field in enumerate(card_fields):
+                label, value, accent = resolve_metric_card(field, metrics, palette, unit_system)
+                box_y = card_y_top + idx * (card_h + card_gap)
+                draw_metric_card(background, dims, (card_x, box_y, card_w, card_h), label, value, accent, palette)
 
-        draw_minimap_overlay(background, dims, track, metrics, minimap_box, minimap_window_km, palette)
+        if show_minimap:
+            draw_minimap_overlay(background, dims, track, metrics, minimap_box, minimap_window_km, palette)
 
-    draw_profile_chart(background, dims, graph_box, track, video_time_s + offset_s, smooth_window=chart_smooth_window, palette=palette, title="Elevation")
+    if show_elevation:
+        chart_title = "Altitude" if unit_system == UNIT_IMPERIAL else "Elevation"
+        draw_profile_chart(background, dims, graph_box, track, video_time_s + offset_s, smooth_window=chart_smooth_window, palette=palette, title=chart_title)
 
     overlay = add_layer(overlay, background, 0.92)
 
@@ -832,6 +917,11 @@ def export_video(
     gauge_max_kph: float = 0.0,
     minimap_window_km: float = DEFAULT_MINIMAP_WINDOW_KM,
     overlay_theme: str = "light",
+    unit_system: str = UNIT_METRIC,
+    show_gauge: bool = True,
+    show_cards: bool = True,
+    show_minimap: bool = True,
+    show_elevation: bool = True,
 ) -> Path:
     if not ensure_ffmpeg_available():
         raise RuntimeError("FFmpeg wurde nicht gefunden. Bitte FFmpeg installieren oder in PATH verfügbar machen.")
@@ -874,6 +964,11 @@ def export_video(
                 gauge_max_kph,
                 minimap_window_km,
                 overlay_theme,
+                unit_system,
+                show_gauge,
+                show_cards,
+                show_minimap,
+                show_elevation,
             )
             writer.write(rendered)
             if progress_placeholder is not None:
@@ -944,6 +1039,13 @@ def reset_session_state() -> None:
         "show_export_dialog": False,
         "ui_mode": "Easy",
         "overlay_theme": "light",
+        "overlay_preset": "Custom",
+        "_last_applied_preset": "Custom",
+        "unit_system": UNIT_METRIC,
+        "show_gauge": True,
+        "show_cards": True,
+        "show_minimap": True,
+        "show_elevation": True,
         "preview_frame": 0,
     }
     for key, value in defaults.items():
@@ -968,6 +1070,11 @@ def preview_frame(
     gauge_max_kph: float,
     minimap_window_km: float,
     overlay_theme: str,
+    unit_system: str,
+    show_gauge: bool,
+    show_cards: bool,
+    show_minimap: bool,
+    show_elevation: bool,
 ) -> float:
     frame = read_frame_at(video_meta.path, frame_index)
     if frame is None:
@@ -987,6 +1094,11 @@ def preview_frame(
         gauge_max_kph,
         minimap_window_km,
         overlay_theme,
+        unit_system,
+        show_gauge,
+        show_cards,
+        show_minimap,
+        show_elevation,
     )
     rendered_rgb = cv2.cvtColor(rendered, cv2.COLOR_BGR2RGB)
     preview_scale = min(1.0, 620.0 / max(1.0, float(video_meta.height)))
@@ -1026,6 +1138,11 @@ def export_ui(
     gauge_max_kph: float,
     minimap_window_km: float,
     overlay_theme: str,
+    unit_system: str,
+    show_gauge: bool,
+    show_cards: bool,
+    show_minimap: bool,
+    show_elevation: bool,
 ) -> None:
     with st.popover("Export Video", use_container_width=True):
         output_dir = st.text_input("Export-Ordner", value=st.session_state.export_directory, key="export_directory")
@@ -1052,6 +1169,11 @@ def export_ui(
                 gauge_max_kph=gauge_max_kph,
                 minimap_window_km=minimap_window_km,
                 overlay_theme=overlay_theme,
+                unit_system=unit_system,
+                show_gauge=show_gauge,
+                show_cards=show_cards,
+                show_minimap=show_minimap,
+                show_elevation=show_elevation,
             )
             status.success(f"Fertig: {result}")
             with result.open("rb") as handle:
@@ -1124,16 +1246,38 @@ def main() -> None:
     with right_col:
         with st.container(border=True):
             st.subheader("Config")
+            overlay_preset = st.selectbox("Preset", options=list(OVERLAY_PRESETS.keys()), key="overlay_preset")
+            if overlay_preset != "Custom" and st.session_state._last_applied_preset != overlay_preset:
+                apply_overlay_preset(overlay_preset)
+                st.session_state._last_applied_preset = overlay_preset
+                st.rerun()
+            if overlay_preset == "Custom":
+                st.session_state._last_applied_preset = "Custom"
+
+            unit_system = st.selectbox(
+                "Einheiten",
+                options=[UNIT_METRIC, UNIT_IMPERIAL],
+                format_func=lambda value: "Metrisch (km/h, m, km)" if value == UNIT_METRIC else "Imperial (mph, ft, mi)",
+                key="unit_system",
+            )
             card_field_1 = st.selectbox("Card 1", options=list(CARD_FIELD_OPTIONS.keys()), format_func=lambda key: CARD_FIELD_OPTIONS[key], key="card_field_1")
             card_field_2 = st.selectbox("Card 2", options=list(CARD_FIELD_OPTIONS.keys()), format_func=lambda key: CARD_FIELD_OPTIONS[key], key="card_field_2")
             card_field_3 = st.selectbox("Card 3", options=list(CARD_FIELD_OPTIONS.keys()), format_func=lambda key: CARD_FIELD_OPTIONS[key], key="card_field_3")
             minimap_window_km = st.slider("Map Window (km)", 0.4, 3.0, value=float(st.session_state.minimap_window_km), step=0.1, key="minimap_window_km")
+
+            show_gauge = st.checkbox("Gauge anzeigen", value=bool(st.session_state.show_gauge), key="show_gauge")
+            show_cards = st.checkbox("Cards anzeigen", value=bool(st.session_state.show_cards), key="show_cards")
+            show_minimap = st.checkbox("Minimap anzeigen", value=bool(st.session_state.show_minimap), key="show_minimap")
+            show_elevation = st.checkbox("Elevation anzeigen", value=bool(st.session_state.show_elevation), key="show_elevation")
+
             chart_smooth_window = 7
             gauge_max_kph = 0
             overlay_theme = st.selectbox("Overlay Theme", options=["light", "dark"], index=0 if st.session_state.overlay_theme == "light" else 1, key="overlay_theme")
             if ui_mode == "Advanced":
                 chart_smooth_window = st.slider("Elevation Smooth", 1, 21, value=int(st.session_state.chart_smooth_window), step=2, key="chart_smooth_window")
-                gauge_max_kph = st.slider("Gauge Max KPH", 0, 180, value=int(st.session_state.gauge_max_kph), step=5, key="gauge_max_kph")
+                max_speed_range = 120 if unit_system == UNIT_IMPERIAL else 180
+                gauge_unit = speed_unit_label(unit_system)
+                gauge_max_kph = st.slider(f"Gauge Max {gauge_unit}", 0, max_speed_range, value=min(max_speed_range, int(st.session_state.gauge_max_kph)), step=5, key="gauge_max_kph")
             else:
                 overlay_theme = st.session_state.overlay_theme
 
@@ -1155,6 +1299,11 @@ def main() -> None:
                 float(gauge_max_kph),
                 float(minimap_window_km),
                 str(overlay_theme),
+                str(unit_system),
+                bool(show_gauge),
+                bool(show_cards),
+                bool(show_minimap),
+                bool(show_elevation),
             )
 
     with center_col:
@@ -1170,6 +1319,11 @@ def main() -> None:
                 float(gauge_max_kph),
                 float(minimap_window_km),
                 str(st.session_state.overlay_theme),
+                str(unit_system),
+                bool(show_gauge),
+                bool(show_cards),
+                bool(show_minimap),
+                bool(show_elevation),
             )
             st.caption(f"Offset {offset_s:+.1f}s | GPX-Zeit {format_seconds(max(0.0, current_gpx_time))}")
 
