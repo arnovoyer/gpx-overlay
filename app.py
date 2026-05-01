@@ -596,6 +596,24 @@ def apply_overlay_config(config: dict[str, object]) -> None:
             st.session_state.ui_mode = ui_mode
 
 
+def reset_overlay_config() -> None:
+    st.session_state.overlay_preset = "Custom"
+    st.session_state._last_applied_preset = "Custom"
+    st.session_state.overlay_theme = "light"
+    st.session_state.unit_system = UNIT_METRIC
+    st.session_state.card_field_1 = DEFAULT_CARD_FIELDS[0]
+    st.session_state.card_field_2 = DEFAULT_CARD_FIELDS[1]
+    st.session_state.card_field_3 = DEFAULT_CARD_FIELDS[2]
+    st.session_state.minimap_window_km = DEFAULT_MINIMAP_WINDOW_KM
+    st.session_state.chart_smooth_window = 7
+    st.session_state.gauge_max_kph = 0
+    st.session_state.show_gauge = True
+    st.session_state.show_cards = True
+    st.session_state.show_minimap = True
+    st.session_state.show_elevation = True
+    st.session_state.ui_mode = "Easy"
+
+
 def apply_ui_style() -> None:
     st.markdown(
         """
@@ -1375,6 +1393,11 @@ def main() -> None:
                     st.rerun()
                 except Exception as exc:
                     st.error(f"Config konnte nicht geladen werden: {exc}")
+
+            if st.button("Config zurücksetzen", use_container_width=True):
+                reset_overlay_config()
+                st.success("Konfiguration zurückgesetzt")
+                st.rerun()
 
     card_fields = (card_field_1, card_field_2, card_field_3)
 
