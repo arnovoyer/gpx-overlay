@@ -79,6 +79,23 @@ OVERLAY_PRESETS: dict[str, Optional[dict[str, object]]] = {
     },
 }
 
+OVERLAY_CONFIG_KEYS = (
+    "overlay_preset",
+    "overlay_theme",
+    "unit_system",
+    "card_field_1",
+    "card_field_2",
+    "card_field_3",
+    "minimap_window_km",
+    "chart_smooth_window",
+    "gauge_max_kph",
+    "show_gauge",
+    "show_cards",
+    "show_minimap",
+    "show_elevation",
+    "ui_mode",
+)
+
 @dataclass(frozen=True)
 class VideoMeta:
     path: Path
@@ -520,6 +537,63 @@ def apply_overlay_preset(preset_name: str) -> None:
         return
     for key, value in preset.items():
         st.session_state[key] = value
+
+
+def current_overlay_config() -> dict[str, object]:
+    return {
+        key: st.session_state.get(key)
+        for key in OVERLAY_CONFIG_KEYS
+        if key in st.session_state
+    }
+
+
+def apply_overlay_config(config: dict[str, object]) -> None:
+    valid_presets = set(OVERLAY_PRESETS.keys())
+    valid_units = {UNIT_METRIC, UNIT_IMPERIAL}
+    valid_themes = {"light", "dark"}
+
+    preset_name = str(config.get("overlay_preset", "Custom"))
+    if preset_name not in valid_presets:
+        preset_name = "Custom"
+    st.session_state.overlay_preset = preset_name
+    st.session_state._last_applied_preset = preset_name
+    if preset_name != "Custom":
+        apply_overlay_preset(preset_name)
+
+    theme = str(config.get("overlay_theme", st.session_state.overlay_theme))
+    if theme in valid_themes:
+        st.session_state.overlay_theme = theme
+
+    unit_system = str(config.get("unit_system", st.session_state.unit_system))
+    if unit_system in valid_units:
+        st.session_state.unit_system = unit_system
+
+    for key in ("card_field_1", "card_field_2", "card_field_3"):
+        value = config.get(key)
+        if isinstance(value, str) and value in CARD_FIELD_OPTIONS:
+            st.session_state[key] = value
+
+    for key in ("show_gauge", "show_cards", "show_minimap", "show_elevation"):
+        if key in config:
+            st.session_state[key] = bool(config[key])
+
+    for key in ("chart_smooth_window", "gauge_max_kph"):
+        if key in config:
+            try:
+                st.session_state[key] = int(float(config[key]))
+            except (TypeError, ValueError):
+                pass
+
+    if "minimap_window_km" in config:
+        try:
+            st.session_state.minimap_window_km = float(config["minimap_window_km"])
+        except (TypeError, ValueError):
+            pass
+
+    if "ui_mode" in config:
+        ui_mode = str(config["ui_mode"])
+        if ui_mode in {"Easy", "Advanced"}:
+            st.session_state.ui_mode = ui_mode
 
 
 def apply_ui_style() -> None:
@@ -1280,6 +1354,27 @@ def main() -> None:
                 gauge_max_kph = st.slider(f"Gauge Max {gauge_unit}", 0, max_speed_range, value=min(max_speed_range, int(st.session_state.gauge_max_kph)), step=5, key="gauge_max_kph")
             else:
                 overlay_theme = st.session_state.overlay_theme
+
+            st.caption("Konfiguration als JSON speichern oder laden")
+            config_json = json.dumps(current_overlay_config(), ensure_ascii=False, indent=2)
+            st.download_button(
+                "Config als JSON speichern",
+                data=config_json,
+                file_name="gpx-overlay-config.json",
+                mime="application/json",
+                use_container_width=True,
+            )
+            config_upload = st.file_uploader("Config JSON laden", type=["json"], key="config_json_upload")
+            if config_upload is not None and st.button("JSON importieren", use_container_width=True):
+                try:
+                    imported = json.loads(config_upload.getvalue().decode("utf-8"))
+                    if not isinstance(imported, dict):
+                        raise ValueError("Die JSON-Datei muss ein Objekt enthalten.")
+                    apply_overlay_config(imported)
+                    st.success("Konfiguration geladen")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Config konnte nicht geladen werden: {exc}")
 
     card_fields = (card_field_1, card_field_2, card_field_3)
 
