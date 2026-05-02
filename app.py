@@ -1399,6 +1399,23 @@ def main() -> None:
                 st.success("Konfiguration zurückgesetzt")
                 st.rerun()
 
+            if st.button("Preset speichern", use_container_width=True):
+                try:
+                    export_root = Path(st.session_state.export_directory)
+                    export_root.mkdir(parents=True, exist_ok=True)
+                    preset_obj = current_overlay_config()
+                    preset_name_safe = str(st.session_state.get("overlay_preset", "Custom")).replace(" ", "_")
+                    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+                    filename = f"preset-{preset_name_safe}-{timestamp}.json"
+                    target = export_root / filename
+                    with target.open("w", encoding="utf-8") as fh:
+                        json.dump(preset_obj, fh, ensure_ascii=False, indent=2)
+                    with target.open("rb") as fh:
+                        st.success(f"Preset gespeichert: {target}")
+                        st.download_button("Preset herunterladen", data=fh, file_name=filename, mime="application/json", use_container_width=True)
+                except Exception as exc:
+                    st.error(f"Preset konnte nicht gespeichert werden: {exc}")
+
     card_fields = (card_field_1, card_field_2, card_field_3)
 
     if auto_sync_enabled and auto_offset_s is not None:
