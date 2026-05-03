@@ -77,6 +77,16 @@ OVERLAY_PRESETS: dict[str, Optional[dict[str, object]]] = {
         "show_minimap": False,
         "show_elevation": True,
     },
+    "Example": {
+        "card_field_1": "speed",
+        "card_field_2": "dist",
+        "card_field_3": "time",
+        "overlay_theme": "dark",
+        "show_gauge": True,
+        "show_cards": True,
+        "show_minimap": True,
+        "show_elevation": False,
+    },
 }
 
 OVERLAY_CONFIG_KEYS = (
