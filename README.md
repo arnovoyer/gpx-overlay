@@ -3,5 +3,6 @@
 
 ## Diese App legt auf Videos overlays mit Hilfe von einer gpx Datei an
 
- Benötigt:
-- 
+## Benötigt:
+- 1 Video mit integrierten Zeitinformationen
+-
