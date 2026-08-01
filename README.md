@@ -5,4 +5,4 @@
 
 ## Benötigt:
 - 1 Video mit integrierten Zeitinformationen
--
+- 1 GPX-Datei
