@@ -6,3 +6,6 @@
 ## Benötigt:
 - 1 Video mit integrierten Zeitinformationen
 - 1 GPX-Datei
+
+
+Es ist nicht fertig 
