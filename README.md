@@ -7,4 +7,5 @@
 - 1 Video mit integrierten Zeitinformationen
 - 1 GPX-Datei
 
+## Verschiedene Datenfelder wie Geshwindigkeit
 
